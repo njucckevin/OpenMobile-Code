@@ -1,0 +1,23 @@
+absl-py==2.1.0
+dm_env==1.6
+fuzzywuzzy==0.18.0
+google-generativeai==0.8.6  # Upgraded for protobuf 6.x support
+google-ai-generativelanguage==0.6.15  # Required dependency
+grpcio==1.76.0  # Upgraded for protobuf 6.x support
+grpcio-status==1.71.2
+grpcio-tools==1.71.0  # Upgraded for protobuf 6.x support
+immutabledict==2.0.0
+IPython
+jsonschema==4.17.3
+matplotlib==3.6.1
+numpy==1.26.3
+# opencv-python==4.11.0.86  # Install with conda: conda install -c conda-forge opencv
+pandas==2.1.4
+pydub
+protobuf  # Required: android_env proto files were generated with 6.31.1, so 6.x is needed
+pysqlite3>=0.5.4  # Required for SQLite operations; use a version range for cross-platform support
+python-Levenshtein
+pytest
+requests
+tenacity
+termcolor
