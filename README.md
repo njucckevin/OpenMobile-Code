@@ -97,6 +97,16 @@ This project is licensed under the [Apache 2.0 License](https://www.google.com/s
 
 <a id="citation"></a>
 ## 📜 Citation
-Coming soon.
+
+If you find this project useful, please consider citing:
+
+```bibtex
+@article{cheng2026openmobile,
+  title={OpenMobile: Building Open Mobile Agents with Task and Trajectory Synthesis},
+  author={Cheng, Kanzhi and Li, Zehao and Ma, Zheng and Chen, Nuo and Cao, Jialin and Sun, Qiushi and Ding, Zichen and Xu, Fangzhi and Yan, Hang and Chen, Jiajun and others},
+  journal={arXiv preprint arXiv:2604.15093},
+  year={2026}
+}
+```
 
 
