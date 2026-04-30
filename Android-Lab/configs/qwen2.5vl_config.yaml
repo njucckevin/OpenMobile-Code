@@ -1,0 +1,22 @@
+agent:
+    name: Qwen2d5VLAgent
+    args:
+        api_key: 
+        api_base:
+        model_name: "qwen2.5-vl-7b"
+        max_new_tokens: 1024
+
+task:
+    class: PixellevelQWEN2d5VLMobileTask_AutoTest
+    args:
+        save_dir: "./logs/evaluation"
+        max_rounds: 25
+        request_interval: 3
+
+eval:
+  avd_name: Pixel_7_Pro_API_33
+  avd_log_dir: ./logs/evaluation
+  docker: True
+  docker_args:
+    image_name: android_eval:latest
+    port: 6060
