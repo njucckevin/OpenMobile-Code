@@ -1024,6 +1024,45 @@ def _parse_tool_call_json(block: str) -> dict[str, Any] | None:
         return None
 
 
+def _parse_tool_call_xml(block: str) -> dict[str, Any] | None:
+    """Parse Qwen3.5 XML function calls into the existing tool-call dict shape."""
+    m = re.search(r"<tool_call>\s*([\s\S]*?)\s*</tool_call>", block or "")
+    if not m:
+        return None
+    payload = m.group(1).strip()
+    func = re.search(r"<function=([^>\s]+)>\s*([\s\S]*?)\s*</function>", payload)
+    if not func:
+        return None
+
+    arguments: dict[str, Any] = {}
+    for param_name, raw_value in re.findall(
+        r"<parameter=([^>\s]+)>\s*([\s\S]*?)\s*</parameter>", func.group(2)
+    ):
+        value = raw_value.strip()
+        try:
+            arguments[param_name] = json.loads(value)
+        except Exception:
+            arguments[param_name] = value
+    return {"name": func.group(1).strip(), "arguments": arguments}
+
+
+def _parse_native_tool_call(message: Any) -> dict[str, Any] | None:
+    """Convert OpenAI/vLLM native tool_calls into the existing tool-call dict shape."""
+    tool_calls = getattr(message, "tool_calls", None)
+    if not tool_calls:
+        return None
+    call = tool_calls[0]
+    function = getattr(call, "function", None)
+    if function is None:
+        return None
+    raw_args = getattr(function, "arguments", "{}") or "{}"
+    try:
+        args = raw_args if isinstance(raw_args, dict) else json.loads(raw_args)
+    except Exception:
+        return None
+    return {"name": getattr(function, "name", "mobile_use"), "arguments": args}
+
+
 def _extract_thinking_text(block: str) -> str:
     m = re.search(r"<thinking>\s*([\s\S]*?)\s*</thinking>", block or "", flags=re.I)
     return m.group(1).strip() if m else ""
@@ -1435,6 +1474,251 @@ class Qwen3VL(base_agent.EnvironmentInteractingAgent):
             op_text = conclusion_text if conclusion_text else thinking_text
         else:
             op_text = _extract_action_text_qwen3vl(response)
+        self.step_his += f"Step {self.turn_number}: {op_text}; "
+
+        # Compatible: tool_call may look like {"name":"mobile_use","arguments":{...}}
+        args = tool_call.get("arguments", {}) if isinstance(tool_call, dict) else {}
+        action_name = args.get("action", "")
+        try:
+            parsed = qwen3vl_action_transform(action_name, args, width, height)
+            print(parsed)
+        except Exception as e:
+            return base_agent.AgentInteractionResult(
+                True,
+                {
+                    "summary": f"Failed to transform tool-call into action: {e}",
+                    "response": response,
+                    "tool_call": tool_call,
+                },
+            )
+
+        # If model outputs an answer, persist it and stop immediately.
+        if parsed.get("action_type") == "answer":
+            try:
+                act = json_action.JSONAction(**parsed)
+                self.env.execute_action(act)
+            except Exception:
+                print("Failed to execute answer action:", parsed)
+            return base_agent.AgentInteractionResult(
+                True, {"response": response, "step_history": self.step_his, "parsed": parsed}
+            )
+
+        # Record last_action + repeat_time (previous code had these fields but not working)
+        # Here, use the tool-call's arguments as the "action signature", which is more robust than checking 'terminate' in a string.
+        try:
+            action_sig = json.dumps(args, ensure_ascii=False, sort_keys=True)
+        except Exception:
+            action_sig = str(args)
+        if self.last_action == action_sig:
+            self.repeat_time += 1
+        else:
+            self.repeat_time = 0
+        self.last_action = action_sig
+
+        try:
+            act = json_action.JSONAction(**parsed)
+            self.env.execute_action(act)
+            time.sleep(self.wait_after_action_seconds)
+        except Exception:
+            # continue
+            print("Failed to execute action:", parsed)
+
+        if parsed.get("action_type") == "status":
+            return base_agent.AgentInteractionResult(
+                True, {"response": response, "step_history": self.step_his, "parsed": parsed}
+            )
+
+        # If repeated actions reach the threshold: terminate immediately to avoid deadlock in evaluation
+        if self.repeat_time >= 10:
+            return base_agent.AgentInteractionResult(
+                True,
+                {
+                    "summary": "Terminated due to repeated identical actions.",
+                    "response": response,
+                    "step_history": self.step_his,
+                    "parsed": parsed,
+                    "repeat_time": self.repeat_time,
+                },
+            )
+
+        return base_agent.AgentInteractionResult(
+            False, {"response": response, "step_history": self.step_his, "parsed": parsed}
+        )
+
+
+class Qwen35VL(Qwen3VL):
+    """Qwen3.5 GUI agent with switchable native/XML tool-call handling."""
+
+    def __init__(
+        self,
+        env: interface.AsyncEnv,
+        llm: infer.MultimodalLlmWrapper,
+        name: str = "Qwen35VL",
+        wait_after_action_seconds: float = 2.0,
+        model_base_url: str = "http://127.0.0.1:8000/v1",
+        model_api_key: str = "EMPTY",
+        model_name: str = "",
+        extra_headers: dict[str, str] | None = None,
+        qwen35_tool_call_mode: str = "xml",
+    ):
+        super().__init__(
+            env=env,
+            llm=llm,
+            name=name,
+            wait_after_action_seconds=wait_after_action_seconds,
+            model_base_url=model_base_url,
+            model_api_key=model_api_key,
+            model_name=model_name,
+            extra_headers=extra_headers,
+        )
+        if qwen35_tool_call_mode not in {"native", "xml"}:
+            raise ValueError(
+                "qwen35_tool_call_mode must be either 'native' or 'xml', "
+                f"got {qwen35_tool_call_mode!r}"
+            )
+        self.qwen35_tool_call_mode = qwen35_tool_call_mode
+
+    def step(self, instruction: str) -> base_agent.AgentInteractionResult:
+        self.turn_number += 1
+
+        state = self.get_post_transition_state()
+        screenshot = state.pixels.copy()  # RGB format from Android
+
+        # Save per-step ui_elements for post-processing (e.g., click_point -> bbox).
+        # We write metadata.json every step (overwrite) to avoid needing an explicit "episode end" hook.
+        if self.save_dir is not None:
+            try:
+                step_idx = self.turn_number - 1
+                self._ui_elements_history.append({
+                    "step": step_idx,
+                    "logical_screen_size": list(self.env.logical_screen_size),
+                    "ui_elements": [_ui_element_to_metadata_dict(e) for e in state.ui_elements],
+                })
+                meta = {"goal": instruction, "steps": self._ui_elements_history}
+                with open(os.path.join(self.save_dir, "metadata.json"), "w", encoding="utf-8") as f:
+                    json.dump(meta, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"Failed to save ui_elements metadata: {e}")
+
+        # Save screenshot
+        if self.save_dir is not None:
+            try:
+                screenshot_path = os.path.join(self.save_dir, f"screenshot_step{self.turn_number - 1}.png")
+                Image.fromarray(screenshot).save(screenshot_path)
+            except Exception as e:
+                print(f"Failed to save screenshot: {e}")
+
+        self._recent_screenshots.append(screenshot)
+        height, width = screenshot.shape[:2]
+
+        use_native_tools = self.qwen35_tool_call_mode == "native"
+        if use_native_tools:
+            system_prompt = QWEN35_NATIVE_SYSTEM_PROMPT
+        else:
+            system_prompt = QWEN35_SYSTEM_PROMPT
+        user_prompt = QWEN35_USER_PROMPT.format(
+            instruction=instruction, history=self.step_his
+        )
+        print(user_prompt)
+
+        user_content = [{"type": "text", "text": user_prompt}]
+        for img in list(self._recent_screenshots):
+            user_content.append(
+                {"type": "image_url", "image_url": {"url": self._to_base64_png(img)}}
+            )
+
+        messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": system_prompt}],
+            },
+            {
+                "role": "user",
+                "content": user_content,
+            },
+        ]
+        response = ""
+        completion = None
+        completion_message = None
+        response_content = ""
+
+        if use_native_tools:
+            for _ in range(5):
+                try:
+                    completion = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=messages,
+                        temperature=0,
+                        timeout=60.0,
+                        tools=QWEN35_TOOLS,
+                        tool_choice="auto",
+                        extra_body={
+                            "chat_template_kwargs": {"enable_thinking": False}
+                        },
+                    )
+                except Exception as e:
+                    print(f"Qwen35VL request failed or timed out after 60s: {e}")
+                    response = ""
+                    continue
+                # print(completion)
+                try:
+                    completion_message = completion.choices[0].message
+                    response_content = completion_message.content or ""
+                    response = completion_message.model_dump_json(
+                        indent=2, exclude_none=True
+                    )
+                except Exception:
+                    response = ""
+                    response_content = ""
+                    completion_message = None
+                if response.strip() or getattr(completion_message, "tool_calls", None):
+                    break
+                print("sleep 10 seconds and retry")
+                time.sleep(10)
+        else:
+            for _ in range(5):
+                try:
+                    completion = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=messages,
+                        temperature=0,
+                        timeout=60.0,
+                        extra_body={
+                            "chat_template_kwargs": {"enable_thinking": False}
+                        },
+                    )
+                except Exception as e:
+                    print(f"Qwen35VL request failed or timed out after 60s: {e}")
+                    response = ""
+                    continue
+                # print(completion)
+                try:
+                    response = completion.choices[0].message.content or ""
+                    response_content = response
+                except Exception:
+                    response = ""
+                    response_content = ""
+                if response.strip():
+                    break
+                print("sleep 10 seconds and retry")
+                time.sleep(10)
+
+        print(response)
+        print("=" * 50)
+
+        if use_native_tools:
+            tool_call = _parse_native_tool_call(completion_message)
+            if not tool_call:
+                print(f"No valid tool_call found in Qwen3.5 output: {response}")
+                tool_call = _parse_tool_call_xml(response)
+        else:
+            tool_call = _parse_tool_call_xml(response)
+        if not tool_call:
+            return base_agent.AgentInteractionResult(
+                True, {"summary": "No valid <tool_call> found in model output.", "response": response}
+            )
+
+        op_text = _extract_action_text_qwen3vl(response_content)
         self.step_his += f"Step {self.turn_number}: {op_text}; "
 
         # Compatible: tool_call may look like {"name":"mobile_use","arguments":{...}}

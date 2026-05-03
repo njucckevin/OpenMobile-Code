@@ -13,7 +13,7 @@ Release Plans:
 - [x] OpenMobile trajectoy data
 - [x] Fine-tuned checkpoints based on OpenMobile data
 - [x] AndroidWorld evaluation code
-- [ ] Task and trajectory synthesis code
+- [x] Task and trajectory synthesis code
 - [ ] Other code and resources
 
 ## 📋 Table of Contents
@@ -72,11 +72,178 @@ python run.py \
 
 <a id="trajectory-synthesis"></a>
 ## 🎮 Trajectory Synthesis
-Coming soon.
+
+OpenMobile synthesizes trajectories in three stages: environment exploration, task-instruction synthesis, and trajectory rollout/post-processing. The scripts below are organized so that the output of each stage is the input of the next stage.
+
+Before running this pipeline, please finish the environment setup in [`AndroidWorld/environment.md`](AndroidWorld/environment.md), start the AndroidWorld emulator, and configure an OpenAI-compatible API endpoint for strong-model calls:
+
+```bash
+export OPENAI_BASE_URL=your_openai_compatible_base_url
+export OPENAI_API_KEY=your_api_key_or_EMPTY
+```
+
+The examples below assume the repository root is `/path/to/OpenMobile`.
+
+### 1. Explore AndroidWorld Screens
+
+First, randomly explore AndroidWorld apps to collect screen transitions. This stage records screenshots, transition trajectories, and the task initialization parameters used later for rollout.
+
+```bash
+cd /path/to/OpenMobile/AndroidWorld
+
+python random_walk_aw.py \
+  --console_port 5554 \
+  --grpc_port 8554 \
+  --perform_emulator_setup=true
+```
+
+The exploration results are written to:
+
+```text
+AndroidWorld/explore_results/
+  screenshots/
+  trajectories/
+  params/
+```
+
+Then convert the raw random-walk trajectories into the state-transfer format consumed by the task-synthesis pipeline:
+
+```bash
+python process_explore.py \
+  --traj_dir explore_results/trajectories \
+  --out explore_results/state_transfer_explore.json
+```
+
+The key output of this step is `AndroidWorld/explore_results/state_transfer_explore.json`.
+
+### 2. Synthesize Task Instructions
+
+Next, build global environment memory from the exploration results and synthesize high-level task instructions with a strong multimodal model.
+
+```bash
+cd /path/to/OpenMobile/task_synthesis
+
+python pipeline.py \
+  --dataset_id androidworld_explore \
+  --state_transfer ../AndroidWorld/explore_results/state_transfer_explore.json \
+  --screenshots_dir ../AndroidWorld/explore_results/screenshots \
+  --max_num_syn_screen 1000 \
+  --max_workers 64
+```
+
+This pipeline deduplicates screens, annotates UI elements, builds context from the explored transition graph, generates task instructions, judges their quality, and writes the final rollout-ready instruction file:
+
+```text
+task_synthesis/output/androidworld_explore/
+  synthesized_tasks_androidworld_explore_final.json
+```
+
+Each final item contains the base AndroidWorld task name, synthesized instruction, sample id, and the exploration `task_id` used to recover the same initialization parameters during rollout.
+
+### 3. Rollout Synthesized Tasks
+
+Use the synthesized instructions to collect agent trajectories in AndroidWorld. The rollout script initializes the environment with corresponding base task, but uses the synthesized instruction for agent rollout, and saves per-step screenshots and metadata.
+
+```bash
+cd /path/to/OpenMobile/AndroidWorld
+
+python run_diy.py \
+  --input_json ../task_synthesis/output/androidworld_explore/synthesized_tasks_androidworld_explore_final.json \
+  --output_dir runs/androidworld_explore_rollout \
+  --agent_name qwen3vl \
+  --console_port 5554 \
+  --grpc_port 8554 \
+  --perform_emulator_setup=false \
+  --use_params_init True \
+  --qwen3vl_model_base_url your_vllm_url \
+  --qwen3vl_model_name your_strong_model_name \
+  --qwen3vl_model_api_key EMPTY
+```
+
+Rollout trajectories are stored under `AndroidWorld/runs/androidworld_explore_rollout/`, with one subdirectory per synthesized task.
+
+#### Policy-switching Rollout
+
+In the paper, we use **Policy-switching Rollout** to collect trajectories with error-recovery signal. Instead of using a single policy throughout the episode, the rollout starts with a weaker actor model and lets a stronger model monitor the trajectory. When the weak actor appears to deviate from the task, the strong model intervenes and continues from the current screen.
+
+To enable this mode, deploy both a strong OpenAI-compatible model endpoint and a weak OpenAI-compatible model endpoint, then use `--agent_name qwen3vl_switching`:
+
+```bash
+cd /path/to/OpenMobile/AndroidWorld
+
+python run_diy.py \
+  --input_json ../task_synthesis/output/androidworld_explore/synthesized_tasks_androidworld_explore_final.json \
+  --output_dir runs/androidworld_explore_switching_rollout \
+  --agent_name qwen3vl_switching \
+  --console_port 5554 \
+  --grpc_port 8554 \
+  --perform_emulator_setup=false \
+  --qwen3vl_model_base_url your_strong_model_url \
+  --qwen3vl_model_name your_strong_model_name \
+  --qwen3vl_model_api_key EMPTY \
+  --qwen3vl_switching_weak_model_base_url your_weak_model_url \
+  --qwen3vl_switching_weak_model_name your_weak_model_name \
+  --qwen3vl_switching_weak_model_api_key EMPTY
+```
+
+The strong model is used for monitoring and intervention, while the weak model is used for the initial rollout policy. The saved trajectories include policy-switching metadata such as `policy_source`, `monitor_output`, and `intervention_triggered`, which are consumed by the post-processing and conversion scripts below.
+
+### 4. Post-process and Convert Trajectories
+
+Merge successful rollouts into a single trajectory file:
+
+```bash
+python process_trajs.py \
+  --runs_dir runs/androidworld_explore_rollout \
+  --output-name data_merge_success.json
+```
+
+Optionally refine step-level text fields such as conclusions and thinking traces with a strong multimodal model:
+
+```bash
+python process_refine.py \
+  --input runs/androidworld_explore_rollout/data_merge_success.json \
+  --output runs/androidworld_explore_rollout/data_merge_success_conclusion.json \
+  --mode conclusion
+
+python process_refine.py \
+  --input runs/androidworld_explore_rollout/data_merge_success_conclusion.json \
+  --output runs/androidworld_explore_rollout/data_merge_success_conclusion_thinking.json \
+  --mode thinking \
+```
+
+Finally, convert the merged/refined trajectories into the ShareGPT-style multimodal format used by LLaMA-Factory:
+
+```bash
+python convert_traj.py \
+  --input runs/androidworld_explore_rollout/data_merge_success_conclusion_thinking.json \
+  --output runs/androidworld_explore_rollout/openmobile_train.json \
+  --refine \
+  --model-format qwen25vl
+```
+
+The `--model-format` option controls the target SFT format. We currently support `qwen25vl` and `qwen3vl`, corresponding to the Qwen2.5-VL-style and Qwen3-VL-style action formats. The resulting JSON file can be used as instruction-tuning data.
 
 <a id="training"></a>
 ## 💻 Training
-Coming soon.
+
+We fine-tune OpenMobile models with [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory). Instead of maintaining a full training tutorial in this repository, we provide two reference configuration files under [`LlamaFactory/`](LlamaFactory/):
+
+```text
+LlamaFactory/
+  dataset_info.json
+  qwen3vl_full_sft.yaml
+```
+
+The released SFT data can be downloaded from the [OpenMobile-Data dataset](https://huggingface.co/datasets/cckevinn/OpenMobile-Data). The public training splits are `split1.json`, `split2.json`, `split3.json`, and `split4.json`; `dataset_info.json` registers these four files as `openmobile_split1` through `openmobile_split4`.
+
+To use the reference config, place the four JSON split files in the LLaMA-Factory data directory, copy or merge `dataset_info.json` into LLaMA-Factory's dataset registry, and launch SFT with the provided YAML config:
+
+```bash
+llamafactory-cli train LlamaFactory/qwen3vl_full_sft.yaml
+```
+
+The YAML file is intended as a reproducible starting point for Qwen3-VL full-parameter SFT. Please adjust `model_name_or_path`, `dataset_dir`, batch size, DeepSpeed config, and output paths according to your local LLaMA-Factory setup and hardware.
 
 <a id="acknowledgements"></a>
 ## 💐 Acknowledgements

@@ -15,6 +15,144 @@ QWEN3VL_SYSTEM_PROMPT = "\n\n# Tools\n\nYou may call one or more functions to as
 QWEN3VL_USER_PROMPT = "The user query: {instruction}.\nTask progress (You have done the following operation on the current device): {history}.\n"
 
 # =========================
+# Qwen3.5 tool-call prompts
+# =========================
+
+QWEN35_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "mobile_use",
+            "description": (
+                "Use a touchscreen to interact with a mobile device, and take screenshots.\n"
+                "* This is an interface to a mobile device with touchscreen. You can perform actions like clicking, typing, swiping, etc.\n"
+                "* Some applications may take time to start or process actions, so you may need to wait and take successive screenshots to see the results of your actions.\n"
+                "* The screen's resolution is 999x999.\n"
+                "* Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges unless asked."
+            ),
+            "parameters": {
+                "properties": {
+                    "action": {
+                        "description": (
+                            "The action to perform. The available actions are:\n"
+                            "* `click`: Click the point on the screen with coordinate (x, y).\n"
+                            "* `long_press`: Press the point on the screen with coordinate (x, y) for specified seconds.\n"
+                            "* `swipe`: Swipe from the starting point with coordinate (x, y) to the end point with coordinates2 (x2, y2).\n"
+                            "* `type`: Input the specified text into the activated input box.\n"
+                            "* `answer`: Output the answer.\n"
+                            "* `system_button`: Press the system button.\n"
+                            "* `wait`: Wait specified seconds for the change to happen.\n"
+                            "* `terminate`: Terminate the current task and report its completion status."
+                        ),
+                        "enum": [
+                            "click",
+                            "long_press",
+                            "swipe",
+                            "type",
+                            "answer",
+                            "system_button",
+                            "wait",
+                            "terminate",
+                        ],
+                        "type": "string",
+                    },
+                    "coordinate": {
+                        "description": "(x, y): The x and y coordinates. Required only by `action=click`, `action=long_press`, and `action=swipe`.",
+                        "type": "array",
+                    },
+                    "coordinate2": {
+                        "description": "(x, y): The end coordinates. Required only by `action=swipe`.",
+                        "type": "array",
+                    },
+                    "text": {
+                        "description": "Required only by `action=type` and `action=answer`.",
+                        "type": "string",
+                    },
+                    "time": {
+                        "description": "The seconds to wait. Required only by `action=long_press` and `action=wait`.",
+                        "type": "number",
+                    },
+                    "button": {
+                        "description": "Required only by `action=system_button`.",
+                        "enum": ["Back", "Home", "Menu", "Enter"],
+                        "type": "string",
+                    },
+                    "status": {
+                        "description": "Required only by `action=terminate`.",
+                        "enum": ["success", "failure"],
+                        "type": "string",
+                    },
+                },
+                "required": ["action"],
+                "type": "object",
+            },
+        },
+    }
+]
+
+QWEN35_SYSTEM_PROMPT = """
+
+# Tools
+
+You have access to the following functions:
+
+<tools>
+{"type": "function", "function": {"name": "mobile_use", "description": "Use a touchscreen to interact with a mobile device, and take screenshots.\n* This is an interface to a mobile device with touchscreen. You can perform actions like clicking, typing, swiping, etc.\n* Some applications may take time to start or process actions, so you may need to wait and take successive screenshots to see the results of your actions.\n* The screen's resolution is 999x999.\n* Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges unless asked.", "parameters": {"properties": {"action": {"description": "The action to perform. The available actions are:\n* `click`: Click the point on the screen with coordinate (x, y).\n* `long_press`: Press the point on the screen with coordinate (x, y) for specified seconds.\n* `swipe`: Swipe from the starting point with coordinate (x, y) to the end point with coordinates2 (x2, y2).\n* `type`: Input the specified text into the activated input box.\n* `answer`: Output the answer.\n* `system_button`: Press the system button.\n* `wait`: Wait specified seconds for the change to happen.\n* `terminate`: Terminate the current task and report its completion status.", "enum": ["click", "long_press", "swipe", "type", "answer", "system_button", "wait", "terminate"], "type": "string"}, "coordinate": {"description": "(x, y): The x and y coordinates. Required only by `action=click`, `action=long_press`, and `action=swipe`.", "type": "array"}, "coordinate2": {"description": "(x, y): The end coordinates. Required only by `action=swipe`.", "type": "array"}, "text": {"description": "Required only by `action=type` and `action=answer`.", "type": "string"}, "time": {"description": "The seconds to wait. Required only by `action=long_press` and `action=wait`.", "type": "number"}, "button": {"description": "Required only by `action=system_button`.", "enum": ["Back", "Home", "Menu", "Enter"], "type": "string"}, "status": {"description": "Required only by `action=terminate`.", "enum": ["success", "failure"], "type": "string"}}, "required": ["action"], "type": "object"}}}
+</tools>
+
+If you choose to call a function, reply with exactly one function call in the following XML format:
+
+<tool_call>
+<function=mobile_use>
+<parameter=action>
+click
+</parameter>
+<parameter=coordinate>
+[163, 718]
+</parameter>
+</function>
+</tool_call>
+
+# Response format
+
+Response format for every step:
+1) Thought: one concise sentence explaining the next move.
+2) Action: a short imperative describing what to do in the UI.
+3) A single <tool_call>...</tool_call> block in the Qwen3.5 XML function-call format.
+
+Rules:
+- Output exactly in the order: Thought, Action, <tool_call>.
+- Be brief: one sentence for Thought, one sentence for Action.
+- Function calls MUST use <tool_call><function=...><parameter=...>...</parameter></function></tool_call>.
+- Put each argument in its own <parameter=...>...</parameter> block.
+- For array/object arguments, write valid JSON inside the parameter block.
+- Do not output anything after </tool_call>.
+- If finishing, use action=terminate in the tool call.
+"""
+
+QWEN35_NATIVE_SYSTEM_PROMPT = """
+You are an agent who can operate an Android phone on behalf of a user.
+
+At each step, you will be given the current screenshot and a history of what you have done. You need to decide the next action through the provided mobile_use tools.
+
+# Response format
+
+Response format for every step:
+1) Thought: one concise sentence explaining the next move.
+2) Action: a short imperative describing what to do in the UI.
+3) Call exactly one provided mobile_use tool for the device operation.
+
+Rules:
+- Output exactly in the order: Thought, Action and tool call.
+- Be brief: one sentence for Thought, one sentence for Action.
+- Use the provided mobile_use tool for device operations.
+- If finishing, use action=terminate in the tool call.
+"""
+
+QWEN35_USER_PROMPT = "The user query: {instruction}.\nTask progress (You have done the following operation on the current device): {history}.\n"
+
+
+# =========================
 # Qwen25VL tool-call prompts
 # =========================
 
