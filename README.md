@@ -14,7 +14,50 @@ Release Plans:
 - [x] Fine-tuned checkpoints based on OpenMobile data
 - [x] AndroidWorld evaluation code
 - [x] Task and trajectory synthesis code
-- [ ] Other code and resources
+- [x] Qwen3.5 Support
+- [x] Other code and resources
+
+## 🤗 Qwen3.5 Support
+We provide a minimal recipe to fine-tune and evaluate Qwen3.5 on AndroidWorld with OpenMobile data; **use SGLang for serving (see notes on vLLM below)**.
+
+**Evaluation.** After environment setup and starting an OpenAI-compatible 
+model server, run `AndroidWorld/run.py` as in the [Evaluation](#evaluation) section, 
+but set `--agent_name qwen35vl`.
+
+**Training.** Use the same [OpenMobile-Data](https://huggingface.co/datasets/cckevinn/OpenMobile-Data) splits (`openmobile_split1`–`4`). The released JSON is in **Qwen3-VL** SFT format; for **Qwen3.5-9B** you must convert it first:
+
+| What changes | Before (released / `qwen3vl`) | After (Qwen3.5 SFT) |
+|--------------|-------------------------------|----------------------|
+| `system` | `QWEN3VL_SYSTEM_PROMPT` (JSON inside `<tool_call>` spec) | `QWEN35_SYSTEM_PROMPT` in [`PROMPT.py`](AndroidWorld/android_world/agents/PROMPT.py) |
+| `assistant` `<tool_call>` | JSON: `{"name": "mobile_use", "arguments": {...}}` | XML: `<function=mobile_use><parameter=action>...</parameter>...</function>` |
+
+Convert with:
+
+```bash
+# After placing split1.json … split4.json under your LLaMA-Factory data/ directory:
+python LlamaFactory/convert_splits_to_qwen35.py \
+  --input data \
+  --output data_qwen35 \
+  --glob "split*.json"
+```
+
+This writes `split1_qwen35.json`, etc. Point `dataset_info.json` / `qwen35_full_sft.yaml` at the converted files, then:
+
+```bash
+llamafactory-cli train LlamaFactory/qwen35_full_sft.yaml
+```
+
+
+**Results.** AndroidWorld success rates (%):
+
+| Model | Setting | pass@1 | pass@3 |
+|-------|---------|--------|--------|
+| Qwen3.5-9B | Official | 57.8 | — |
+| Qwen3.5-9B | Base | 50.9 ± 2.2 | 65.5 |
+| Qwen3.5-9B | SFT (OpenMobile) | 63.8 ± 2.8 | 78.5 |
+
+
+**Note (inference).** We could **not** reproduce the table above when serving Qwen3.5-9B with **vLLM v0.21.0** (OpenAI-compatible `/v1` endpoint). The reported *Base* and *SFT (OpenMobile)* numbers were obtained with **SGLang v0.5.11** on the same `run.py` settings. 
 
 ## 📋 Table of Contents
 - [Project Structure](#project-structure)

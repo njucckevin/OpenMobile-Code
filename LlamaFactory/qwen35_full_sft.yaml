@@ -1,0 +1,54 @@
+# Reference LLaMA-Factory config only. Reported AndroidWorld SFT numbers used ms-swift, not LF.
+# Before train: merge dataset_info_qwen35.json into LLaMA-Factory data/dataset_info.json;
+# run convert_splits_to_qwen35.py so data_qwen35/ contains split*_qwen35.json.
+# Requires a recent LLaMA-Factory build with Qwen3.5 + template qwen3_5_nothink.
+
+### model
+model_name_or_path: Qwen/Qwen3.5-9B-Instruct
+image_max_pixels: 12845056
+video_max_pixels: 12845056
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+freeze_vision_tower: true
+freeze_multi_modal_projector: true
+freeze_language_model: false
+deepspeed: examples/deepspeed/ds_z3_config.json
+
+### dataset
+dataset: openmobile_split1,openmobile_split2,openmobile_split3,openmobile_split4
+dataset_dir: data_qwen35
+template: qwen3_5_nothink
+cutoff_len: 32768
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3.5-9b/full/openmobile_sft
+logging_steps: 10
+save_strategy: epoch
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+run_name: qwen3.5-9b_openmobile_sft
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 4
+learning_rate: 1.0e-5
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+
+### eval
+val_size: 0.0
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 500
