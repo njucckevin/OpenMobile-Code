@@ -17,6 +17,8 @@ Release Plans:
 - [x] Qwen3.5 Support
 - [x] Other code and resources
 
+News: OpenMobile is accepted by COLM 2026. 🎉
+
 ## 🤗 Qwen3.5 Support
 We provide a minimal recipe to fine-tune and evaluate Qwen3.5 on AndroidWorld with OpenMobile data; **use SGLang for serving (see notes on vLLM below)**.
 
