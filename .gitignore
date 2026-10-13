@@ -16,7 +16,7 @@ pip-wheel-metadata/
 # Virtual environments
 .venv/
 venv/
-env/
+/env/
 
 # Test and coverage outputs
 .pytest_cache/
@@ -33,3 +33,6 @@ htmlcov/
 # IDE / editor files
 .idea/
 .vscode/
+
+# Local secrets
+.env
