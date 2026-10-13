@@ -1,4 +1,5 @@
 import json
+import os
 from tqdm import tqdm
 from collections import defaultdict
 from screen_transition_index import create_index
@@ -96,7 +97,7 @@ def annotate_unique_screens_with_elements(
     screenshots_dir: str,
     cache_path: str,
     similarity_threshold: float = 0.95,
-    model: str = "gemini-3.1-pro-preview",
+    model: str = os.getenv("ANNOTATE_MODEL", "gemini-3.1-pro-preview"),
     num_threads: int = 64,
     save_every: int = 20,
 ):
@@ -408,7 +409,7 @@ def process_screen(screen_idx, screen):
             ]
         
         response = client.chat.completions.create(
-            model="gemini-3-pro-preview",
+            model=os.getenv("ANNOTATE_MODEL", "gemini-3-pro-preview"),
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content}

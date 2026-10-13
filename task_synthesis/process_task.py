@@ -287,7 +287,7 @@ def process_screen(
 
         client = get_client()
         response = client.chat.completions.create(
-            model="gemini-3.1-pro-preview",
+            model=os.getenv("SYNTHESIS_MODEL", "gemini-3.1-pro-preview"),
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content}
