@@ -1260,11 +1260,15 @@ def _chat_with_retry(
     response = ""
     for _ in range(retry_times):
         try:
+            request_kwargs: dict[str, Any] = {}
+            # Claude 5 endpoints reject the deprecated `temperature` parameter.
+            if "claude" not in (model_name or "").lower():
+                request_kwargs["temperature"] = 0
             completion = client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                temperature=0,
                 timeout=request_timeout_s,
+                **request_kwargs,
             )
         except Exception as e:
             print(
