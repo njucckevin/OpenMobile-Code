@@ -377,6 +377,10 @@ def _main() -> None:
 
   aw_registry = dict(aw_list)
 
+  if _TASK.value:
+      wanted = set(_TASK.value.split(","))
+      aw_registry = {k: v for k, v in aw_registry.items() if k in wanted}
+
   # Record unclickable elements for each app
   UNC_POOL_DIR = os.path.join(BASE_DIR, 'unclickable_elem_pool')
   os.makedirs(UNC_POOL_DIR, exist_ok=True)
