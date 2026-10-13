@@ -19,6 +19,7 @@ from concurrent import futures
 import time
 from typing import Any
 
+import os
 import urllib
 
 from absl import logging
@@ -36,12 +37,25 @@ import numpy as np
 import portpicker
 
 
+_A11Y_FORWARDER_APK_URL = (
+    'https://storage.googleapis.com/android_env-tasks/2024.05.13-accessibility_forwarder.apk'
+)
+_A11Y_FORWARDER_APK_CACHE = (
+    '/tmp/android_world/app_data/2024.05.13-accessibility_forwarder.apk'
+)
+
+
 def _get_accessibility_forwarder_apk() -> bytes:
+  if os.path.isfile(_A11Y_FORWARDER_APK_CACHE):
+    with open(_A11Y_FORWARDER_APK_CACHE, 'rb') as f:
+      return f.read()
   logging.info('Downloading accessibility forwarder apk....')
-  with urllib.request.urlopen(
-      'https://storage.googleapis.com/android_env-tasks/2024.05.13-accessibility_forwarder.apk'
-  ) as response:
-    return response.read()
+  with urllib.request.urlopen(_A11Y_FORWARDER_APK_URL) as response:
+    data = response.read()
+  os.makedirs(os.path.dirname(_A11Y_FORWARDER_APK_CACHE), exist_ok=True)
+  with open(_A11Y_FORWARDER_APK_CACHE, 'wb') as f:
+    f.write(data)
+  return data
 
 
 class EnableNetworkingError(ValueError):
