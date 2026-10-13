@@ -154,3 +154,26 @@ python pipeline.py --help
 
 If the imports work and the help messages print correctly, the environment is usually in a usable state.
 
+
+---
+
+### 8) Notes for Apple Silicon and AVDs created from the command line
+
+- On Apple Silicon use the `system-images;android-33;google_apis;arm64-v8a` system image.
+- An AVD created with `avdmanager` has `hw.keyboard=no`. Set `hw.keyboard=yes` in
+  `~/.android/avd/AndroidWorldAvd.avd/config.ini`, otherwise the `monkey` launches used by
+  `--perform_emulator_setup` fail with `SYS_KEYS has no physical keys` (exit status 251).
+- `python -m pip install -e android_env` regenerates the protobuf bindings with the protoc of the
+  build environment. Restore the committed bindings before pinning protobuf:
+
+```bash
+git checkout -- android_env/android_env/proto
+```
+
+- APKs are cached in `/tmp/android_world/app_data`, including the accessibility forwarder APK
+  that android_env installs at every launch. Pre-download them there if the network is unreliable.
+- If `task_synthesis/pipeline.py` crashes with a segmentation fault in step 4 on macOS, run it with
+  `--max_workers 1`.
+- The models used by the synthesis and post-processing steps are read from the environment:
+  `ANNOTATE_MODEL` (step 2), `SYNTHESIS_MODEL` (step 4), `EVAL_MODEL` (step 5) and
+  `CONCLUSION_MODEL` (`process_refine.py`). The defaults are the Gemini model names in the code.
